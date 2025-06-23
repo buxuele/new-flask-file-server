@@ -1,0 +1,36 @@
+/* 图片卡片样式 */
+.image-card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.image-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+.image-card .card-img-top {
+    width: 100%;
+    /* 设置一个固定的高宽比，例如 1:1 */
+    aspect-ratio: 1 / 1;
+    /* 确保图片填充整个区域而不变形 */
+    object-fit: cover;
+}
+
+/* 调整面包屑导航的链接样式 */
+.breadcrumb-item a {
+    text-decoration: none;
+}
+
+/* 调整文件列表项在移动设备上的显示 */
+@media (max-width: 576px) {
+    .list-group-item {
+        flex-direction: column;
+        align-items: flex-start !important;
+    }
+
+    .list-group-item > div:last-child {
+        margin-top: 0.5rem;
+        width: 100%;
+        text-align: right;
+    }
+}
