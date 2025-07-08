@@ -26,8 +26,8 @@ DATATYPES = {
     'video': ['mp4', 'm4v', 'ogv', 'webm', 'mov'],
     'audio': ['mp3', 'wav', 'ogg', 'm4a'],
     'archive': ['7z', 'zip', 'rar', 'gz', 'tar'],
-    'text': ['txt', 'md', 'py', 'js', 'css', 'html', 'json', 'yaml', 'c', 'cpp', 'java'],
-    'pdf': ['pdf'],
+    'text': ['py', 'js', 'css', 'html', 'json', 'yaml', 'c', 'cpp', 'java'],
+    'ebook': ['epub', 'mobi', 'azw3', 'pdf', "txt", "md"],
 }
 
 # 定义文件图标
@@ -40,6 +40,9 @@ ICONS = {
     'pdf': 'bi-file-earmark-pdf',
     'folder': 'bi-folder-fill',
     'file': 'bi-file-earmark',  # 默认文件图标
+    # --- 新增开始 ---
+    'ebook': 'bi-book-half',  # 为电子书选一个图标
+    # --- 新增结束 ---
 }
 
 
@@ -128,7 +131,12 @@ class FileServerView(MethodView):
 
         # 处理文件下载
         elif abs_path.is_file():
-            return send_file(abs_path)
+            # --- 修改开始 ---
+            # 检查 URL 查询参数中是否有 'dl=1'
+            should_download = request.args.get('dl') == '1'
+            # 如果 should_download 为 True，则强制浏览器下载文件
+            return send_file(abs_path, as_attachment=should_download)
+            # --- 修改结束 ---
 
         return "无效的路径", 400
 

@@ -1,0 +1,462 @@
+
+文件: new_file_server.py
+内容:
+import os
+import mimetypes
+import humanize
+import stat
+from datetime import datetime
+from pathlib import Path
+
+from flask import Flask, render_template, make_response, request, send_file, Response
+from flask.views import MethodView
+from werkzeug.utils import secure_filename
+
+# --- 配置区 ---
+# 设置文件服务的根目录，'.' 表示当前目录，您也可以设置为绝对路径如 'F:\\'
+
+# 设置一个安全的密钥，用于未来的认证功能
+SECRET_KEY = "your-very-secret-key"
+# --- 结束配置 ---
+
+
+app = Flask(__name__)
+app.secret_key = SECRET_KEY
+
+# 定义不同文件类型，用于前端判断
+DATATYPES = {
+    'image': ['gif', 'ico', 'jpeg', 'jpg', 'png', 'svg', 'webp'],
+    'video': ['mp4', 'm4v', 'ogv', 'webm', 'mov'],
+    'audio': ['mp3', 'wav', 'ogg', 'm4a'],
+    'archive': ['7z', 'zip', 'rar', 'gz', 'tar'],
+    'text': ['txt', 'md', 'py', 'js', 'css', 'html', 'json', 'yaml', 'c', 'cpp', 'java'],
+    'pdf': ['pdf'],
+}
+
+# 定义文件图标
+ICONS = {
+    'image': 'bi-image',
+    'video': 'bi-film',
+    'audio': 'bi-music-note-beamed',
+    'archive': 'bi-archive-fill',
+    'text': 'bi-file-earmark-text',
+    'pdf': 'bi-file-earmark-pdf',
+    'folder': 'bi-folder-fill',
+    'file': 'bi-file-earmark',  # 默认文件图标
+}
+
+
+def get_file_type_and_icon(filename_str):
+    """根据文件名后缀返回文件类型和对应的 Bootstrap 图标"""
+    ext = filename_str.split('.')[-1].lower()
+    for file_type, extensions in DATATYPES.items():
+        if ext in extensions:
+            return file_type, ICONS.get(file_type, ICONS['file'])
+    return 'file', ICONS['file']
+
+
+@app.template_filter('human_size')
+def human_size_filter(size_bytes):
+    return humanize.naturalsize(size_bytes)
+
+
+@app.template_filter('human_time')
+def human_time_filter(timestamp):
+    return humanize.naturaltime(datetime.fromtimestamp(timestamp))
+
+
+class FileServerView(MethodView):
+    def get(self, p=''):
+        # 防止目录穿越漏洞
+        request_path = Path(os.path.normpath(p))
+        if '..' in request_path.parts:
+            return "禁止访问", 403
+
+        # 构建安全的文件/目录路径
+        abs_path = FILE_ROOT.joinpath(request_path)
+
+        if not abs_path.exists():
+            return "文件或目录未找到", 404
+
+        # 处理目录浏览
+        if abs_path.is_dir():
+            items = []
+            images = []
+            total_size, file_count, dir_count = 0, 0, 0
+
+            for item in sorted(abs_path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+                # 隐藏点开头的文件/目录
+                if item.name.startswith('.'):
+                    continue
+
+                try:
+                    stat_res = item.stat()
+                except FileNotFoundError:
+                    continue  # 忽略损坏的符号链接等
+
+                entry = {
+                    'name': item.name,
+                    'mtime': stat_res.st_mtime,
+                    'size': stat_res.st_size,
+                    'is_dir': item.is_dir()
+                }
+
+                if item.is_dir():
+                    entry['type'] = 'folder'
+                    entry['icon'] = ICONS['folder']
+                    dir_count += 1
+                    items.append(entry)
+                else:
+                    file_type, icon_class = get_file_type_and_icon(item.name)
+                    entry['type'] = file_type
+                    entry['icon'] = icon_class
+                    file_count += 1
+                    total_size += stat_res.st_size
+                    # 分离图片和其他文件
+                    if file_type == 'image':
+                        images.append(entry)
+                    else:
+                        items.append(entry)
+
+            return render_template(
+                'index.html',
+                current_path=str(request_path),
+                path_parts=request_path.parts,
+                items=items,
+                images=images,
+                total_size=total_size,
+                file_count=file_count,
+                dir_count=dir_count
+            )
+
+        # 处理文件下载
+        elif abs_path.is_file():
+            return send_file(abs_path)
+
+        return "无效的路径", 400
+
+    def post(self, p=''):
+        # 文件上传逻辑
+        request_path = Path(os.path.normpath(p))
+        if '..' in request_path.parts:
+            return "禁止访问", 403
+
+        upload_path = FILE_ROOT.joinpath(request_path)
+        if not upload_path.is_dir():
+            return "目标路径不是一个有效的目录", 400
+
+        files = request.files.getlist('files[]')
+        if not files:
+            return "没有选择文件", 400
+
+        for file in files:
+            if file.filename:
+                # 使用 secure_filename 防止恶意文件名
+                filename = secure_filename(file.filename)
+                try:
+                    file.save(upload_path / filename)
+                except Exception as e:
+                    return f"保存文件 {filename} 时出错: {e}", 500
+
+        return "上传成功", 200
+
+
+# 注册视图
+file_server_view = FileServerView.as_view('file_server_view')
+app.add_url_rule('/', view_func=file_server_view)
+app.add_url_rule('/<path:p>', view_func=file_server_view)
+
+if __name__ == '__main__':
+    # 确保根目录存在
+    FILE_ROOT = Path('F:/').resolve()
+
+    if not FILE_ROOT.exists():
+        print(f"警告：根目录 '{FILE_ROOT}' 不存在。将为您创建它。")
+        FILE_ROOT.mkdir(parents=True, exist_ok=True)
+
+    # 打印访问地址
+    print(f"文件服务已启动，根目录为: {FILE_ROOT}")
+    print("请在浏览器中访问以下地址之一:")
+
+    # 在生产环境中，推荐使用 Gunicorn 或其他 WSGI 服务器
+    # gunicorn -w 4 -b 0.0.0.0:5050 file_server_bs5:app
+    app.run(host='0.0.0.0', port=5050, debug=True)
+
+
+文件: readme.md
+内容:
+# new-flask-file-server
+
+一个简单的文件服务器。 
+
+
+
+- 大力修改， 把 html 中的内容都改为 中文 
+- 图片文件，显示缩略图
+
+### 效果图
+
+PC
+![效果图](效果图/pc1.png)
+![效果图](效果图/pc2.png)
+
+手机端
+![效果图](效果图/merged_image.jpg)
+
+
+
+文件: req.txt
+内容:
+flask
+humanize
+pathlib2
+gunicorn
+
+
+目录: static
+内容: [这是一个目录]
+
+目录: templates
+内容: [这是一个目录]
+
+目录: 效果图
+内容: [这是一个目录]
+
+目录: static\css
+内容: [这是一个目录]
+
+目录: static\js
+内容: [这是一个目录]
+
+文件: static\css\custom.css
+内容:
+/* 图片卡片样式 */
+.image-card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.image-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+.image-card .card-img-top {
+    width: 100%;
+    /* 设置一个固定的高宽比，例如 1:1 */
+    aspect-ratio: 1 / 1;
+    /* 确保图片填充整个区域而不变形 */
+    object-fit: cover;
+}
+
+/* 调整面包屑导航的链接样式 */
+.breadcrumb-item a {
+    text-decoration: none;
+}
+
+/* 调整文件列表项在移动设备上的显示 */
+@media (max-width: 576px) {
+    .list-group-item {
+        flex-direction: column;
+        align-items: flex-start !important;
+    }
+
+    .list-group-item > div:last-child {
+        margin-top: 0.5rem;
+        width: 100%;
+        text-align: right;
+    }
+}
+
+文件: static\js\custom.js
+内容:
+document.addEventListener('DOMContentLoaded', function () {
+    // 初始化图片画廊 GLightbox
+    const lightbox = GLightbox({
+        selector: '.glightbox',
+        touchNavigation: true, // 在移动设备上启用滑动导航
+        loop: true, // 循环播放
+        autoplayVideos: true,
+    });
+
+    // 处理文件上传
+    const uploadForm = document.getElementById('upload-form');
+    const submitButton = document.getElementById('submit-upload');
+    const uploadStatus = document.getElementById('upload-status');
+    const fileInput = document.getElementById('file-input');
+    const uploadModal = new bootstrap.Modal(document.getElementById('uploadModal'));
+
+    if (submitButton) {
+        submitButton.addEventListener('click', function () {
+            if (fileInput.files.length === 0) {
+                uploadStatus.innerHTML = `<div class="alert alert-warning">请先选择要上传的文件。</div>`;
+                return;
+            }
+
+            // 显示加载状态并禁用按钮
+            submitButton.disabled = true;
+            submitButton.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 上传中...`;
+            uploadStatus.innerHTML = '';
+
+            const formData = new FormData(uploadForm);
+
+            fetch(uploadForm.action, {
+                method: 'POST',
+                body: formData,
+            })
+            .then(response => {
+                if (response.ok) {
+                    return response.text(); // 或者 response.json() 如果后端返回 JSON
+                }
+                // 如果服务器返回错误，则抛出错误
+                return response.text().then(text => { throw new Error(text) });
+            })
+            .then(data => {
+                uploadStatus.innerHTML = `<div class="alert alert-success">文件上传成功！页面即将刷新。</div>`;
+                // 2秒后关闭模态框并刷新页面
+                setTimeout(() => {
+                    uploadModal.hide();
+                    location.reload();
+                }, 2000);
+            })
+            .catch(error => {
+                console.error('上传失败:', error);
+                uploadStatus.innerHTML = `<div class="alert alert-danger">上传失败: ${error.message}</div>`;
+            })
+            .finally(() => {
+                // 恢复按钮状态
+                submitButton.disabled = false;
+                submitButton.innerHTML = '开始上传';
+            });
+        });
+    }
+});
+
+文件: templates\index.html
+内容:
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文件浏览器</title>
+
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+    <!-- GLightbox CSS (for image gallery) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/glightbox/dist/css/glightbox.min.css" />
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}">
+</head>
+<body>
+
+<div class="container mt-4">
+    <!-- Breadcrumb Navigation -->
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/"><i class="bi bi-house-door-fill"></i> 根目录</a></li>
+            {% set path_acc = [] %}
+            {% for part in path_parts %}
+                {% set _ = path_acc.append(part) %}
+                <li class="breadcrumb-item"><a href="/{{ path_acc|join('/') }}">{{ part }}</a></li>
+            {% endfor %}
+        </ol>
+    </nav>
+
+    <!-- Action Buttons -->
+    <div class="d-flex justify-content-end mb-3">
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadModal">
+            <i class="bi bi-upload"></i> 上传文件
+        </button>
+    </div>
+
+    <!-- Image Grid -->
+    {% if images %}
+    <h4 class="mb-3">图片 ({{ images|length }})</h4>
+    <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-6 g-3 mb-4">
+        {% for image in images %}
+        <div class="col">
+            <div class="card h-100 shadow-sm image-card">
+                <a href="/{{ current_path }}/{{ image.name }}" class="glightbox" data-gallery="image-gallery" data-title="{{ image.name }}">
+                    <img src="/{{ current_path }}/{{ image.name }}" class="card-img-top" alt="{{ image.name }}" loading="lazy">
+                </a>
+                <div class="card-body">
+                    <p class="card-text small text-truncate">{{ image.name }}</p>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- File and Folder List -->
+    {% if items %}
+    <h4 class="mb-3">文件夹和文件 ({{ items|length }})</h4>
+    <div class="list-group">
+        {% for item in items %}
+        <a href="/{{ current_path }}/{{ item.name }}{% if item.is_dir %}/{% endif %}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+            <div>
+                <i class="{{ item.icon }} me-2 text-primary"></i>
+                <span class="fw-bold">{{ item.name }}</span>
+            </div>
+            <div class="text-muted small">
+                {% if not item.is_dir %}
+                <span class="me-3">{{ item.size | human_size }}</span>
+                {% endif %}
+                <span>{{ item.mtime | human_time }}</span>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Footer -->
+    <footer class="text-center text-muted mt-5 mb-3">
+        <p>{{ dir_count }} 个文件夹, {{ file_count }} 个文件, 总大小 {{ total_size | human_size }}</p>
+    </footer>
+</div>
+
+<!-- Upload Modal -->
+<div class="modal fade" id="uploadModal" tabindex="-1" aria-labelledby="uploadModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="uploadModalLabel">上传到: /{{ current_path }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <form id="upload-form" action="/{{ current_path }}" method="post" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="file-input" class="form-label">选择文件 (可多选)</label>
+                        <input class="form-control" type="file" name="files[]" id="file-input" multiple>
+                    </div>
+                </form>
+                <div id="upload-status" class="mt-3"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-primary" id="submit-upload">开始上传</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bootstrap 5 JS Bundle -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<!-- GLightbox JS (for image gallery) -->
+<script src="https://cdn.jsdelivr.net/npm/glightbox/dist/js/glightbox.min.js"></script>
+<!-- Custom JS -->
+<script src="{{ url_for('static', filename='js/custom.js') }}"></script>
+
+</body>
+</html>
+
+文件: 效果图\merged_image.jpg
+内容: [无法作为文本读取，可能是二进制文件]
+
+文件: 效果图\pc1.png
+内容: [无法作为文本读取，可能是二进制文件]
+
+文件: 效果图\pc2.png
+内容: [无法作为文本读取，可能是二进制文件]

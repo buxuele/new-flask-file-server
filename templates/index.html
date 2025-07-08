@@ -55,26 +55,43 @@
     </div>
     {% endif %}
 
+
     <!-- File and Folder List -->
     {% if items %}
     <h4 class="mb-3">文件夹和文件 ({{ items|length }})</h4>
     <div class="list-group">
         {% for item in items %}
-        <a href="/{{ current_path }}/{{ item.name }}{% if item.is_dir %}/{% endif %}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
-            <div>
+        <!--
+            重要修改：
+            将原来的 <a> 标签改为 <div>，这样我们可以在内部放置多个可点击元素。
+            依然保持 d-flex 来实现左右布局。
+        -->
+        <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+            <!-- 左侧：图标和文件名链接 -->
+            <a href="/{{ current_path }}/{{ item.name }}{% if item.is_dir %}/{% endif %}" class="text-decoration-none text-dark flex-grow-1 text-truncate">
                 <i class="{{ item.icon }} me-2 text-primary"></i>
                 <span class="fw-bold">{{ item.name }}</span>
-            </div>
-            <div class="text-muted small">
+            </a>
+
+            <!-- 右侧：文件大小、修改时间和下载按钮 -->
+            <div class="text-muted small d-flex align-items-center">
                 {% if not item.is_dir %}
                 <span class="me-3">{{ item.size | human_size }}</span>
                 {% endif %}
-                <span>{{ item.mtime | human_time }}</span>
+                <span class="me-3">{{ item.mtime | human_time }}</span>
+
+                <!-- 下载按钮逻辑 -->
+                {% if item.type in ['ebook', 'pdf', 'text', 'archive'] %}
+                <a href="/{{ current_path }}/{{ item.name }}?dl=1" class="btn btn-sm btn-outline-success" title="下载">
+                    <i class="bi bi-download"></i>
+                </a>
+                {% endif %}
             </div>
-        </a>
+        </div>
         {% endfor %}
     </div>
     {% endif %}
+
 
     <!-- Footer -->
     <footer class="text-center text-muted mt-5 mb-3">
