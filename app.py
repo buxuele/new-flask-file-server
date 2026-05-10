@@ -184,5 +184,8 @@ if __name__ == '__main__':
     print("请在浏览器中访问以下地址之一:")
 
     # 在生产环境中，推荐使用 Gunicorn 或其他 WSGI 服务器
-    # gunicorn -w 4 -b 0.0.0.0:5050 file_server_bs5:app
-    app.run(host='0.0.0.0', port=5050, debug=True)
+    # gunicorn -w 4 -b 0.0.0.0:9056 file_server_bs5:app
+
+    # 开机自动运行： 9050，
+    # 临时测试： 9056
+    app.run(host='0.0.0.0', port=9056, debug=True)
